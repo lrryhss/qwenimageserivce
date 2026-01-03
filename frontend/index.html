@@ -324,6 +324,50 @@
             color: var(--accent-red);
         }
 
+        .view-toggle {
+            display: flex;
+            gap: 4px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 3px;
+        }
+
+        .toggle-btn {
+            font-size: 0.65rem;
+            font-family: inherit;
+            color: var(--text-muted);
+            background: none;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            letter-spacing: 0.05em;
+        }
+
+        .toggle-btn:hover {
+            color: var(--text-secondary);
+        }
+
+        .toggle-btn.active {
+            background: var(--accent-cyan);
+            color: var(--bg-primary);
+            font-weight: 500;
+        }
+
+        .image-badge {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--accent-amber);
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
         .gallery-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -415,6 +459,147 @@
 
         .download-btn:hover {
             transform: scale(1.05);
+        }
+
+        /* Fullscreen Modal */
+        .fullscreen-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.98);
+            z-index: 10000;
+            display: none;
+        }
+
+        .fullscreen-modal.active {
+            display: flex;
+        }
+
+        .fullscreen-main {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: zoom-out;
+            padding: 20px;
+        }
+
+        .fullscreen-main img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            border-radius: 4px;
+        }
+
+        .fullscreen-sidebar {
+            width: 320px;
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            transition: margin-right 0.3s ease;
+        }
+
+        .fullscreen-sidebar.hidden {
+            margin-right: -320px;
+        }
+
+        .fullscreen-sidebar-header {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .fullscreen-sidebar-title {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        .fullscreen-sidebar-content {
+            padding: 16px;
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .fullscreen-prompt {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        .fullscreen-close {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            font-size: 1.5rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            z-index: 10;
+        }
+
+        .fullscreen-close:hover {
+            background: var(--accent-red);
+            border-color: var(--accent-red);
+        }
+
+        .fullscreen-toggle-sidebar {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            font-size: 1rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            z-index: 10;
+        }
+
+        .fullscreen-toggle-sidebar:hover {
+            background: var(--accent-cyan);
+            border-color: var(--accent-cyan);
+            color: var(--bg-primary);
+        }
+
+        .fullscreen-sidebar.hidden + .fullscreen-toggle-sidebar,
+        .fullscreen-modal:has(.fullscreen-sidebar.hidden) .fullscreen-toggle-sidebar {
+            right: 20px;
+        }
+
+        .fullscreen-meta {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .fullscreen-meta-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .image-wrapper {
+            cursor: pointer;
         }
 
         .image-info {
@@ -751,6 +936,10 @@
             <section class="gallery-section">
                 <div class="gallery-header">
                     <span class="gallery-title">Generated Images</span>
+                    <div class="view-toggle">
+                        <button class="toggle-btn active" data-view="my" id="toggleMy">My Jobs</button>
+                        <button class="toggle-btn" data-view="all" id="toggleAll">All Jobs</button>
+                    </div>
                     <span class="gallery-count" id="galleryCount">0 images</span>
                     <button class="clear-btn" id="clearGallery">Clear All</button>
                 </div>
@@ -804,6 +993,26 @@
         </aside>
     </div>
 
+    <!-- Fullscreen Modal -->
+    <div class="fullscreen-modal" id="fullscreenModal">
+        <button class="fullscreen-close" onclick="closeFullscreen()">&times;</button>
+        <button class="fullscreen-toggle-sidebar" onclick="toggleFullscreenSidebar()" title="Toggle info panel">i</button>
+
+        <div class="fullscreen-main" onclick="closeFullscreen()">
+            <img id="fullscreenImage" src="" alt="" onclick="event.stopPropagation()">
+        </div>
+
+        <div class="fullscreen-sidebar" id="fullscreenSidebar">
+            <div class="fullscreen-sidebar-header">
+                <span class="fullscreen-sidebar-title">Image Details</span>
+            </div>
+            <div class="fullscreen-sidebar-content">
+                <div class="fullscreen-prompt" id="fullscreenPrompt"></div>
+                <div class="fullscreen-meta" id="fullscreenMeta"></div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const API = '/v1';
         const myJobs = new Set(JSON.parse(localStorage.getItem('qwenJobs') || '[]'));
@@ -827,6 +1036,9 @@
         let ws = null;
         let wsReconnectTimer = null;
         let wsReconnectDelay = 1000;
+        let pollTimer = null;
+        let viewMode = localStorage.getItem('qwenViewMode') || 'my'; // 'my' or 'all'
+        const MAX_IMAGES = 30;
 
         // Initialize
         async function init() {
@@ -837,6 +1049,9 @@
             renderGallery();
             connectWebSocket();
 
+            // Start polling as fallback for WebSocket
+            startPolling();
+
             elements.generate.addEventListener('click', submitJob);
             elements.prompt.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -845,6 +1060,83 @@
                 }
             });
             elements.clearGallery.addEventListener('click', clearGallery);
+
+            // View toggle handlers
+            document.getElementById('toggleMy').addEventListener('click', () => setViewMode('my'));
+            document.getElementById('toggleAll').addEventListener('click', () => setViewMode('all'));
+            updateToggleUI();
+
+            // Fullscreen modal - close on click outside or escape
+            document.getElementById('fullscreenModal').addEventListener('click', (e) => {
+                if (e.target.id === 'fullscreenModal') closeFullscreen();
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') closeFullscreen();
+            });
+        }
+
+        function setViewMode(mode) {
+            viewMode = mode;
+            localStorage.setItem('qwenViewMode', mode);
+            updateToggleUI();
+            renderGallery();
+
+            // If switching to 'all', load any completed jobs we don't have
+            if (mode === 'all') {
+                loadAllCompletedJobs();
+            }
+        }
+
+        function updateToggleUI() {
+            document.getElementById('toggleMy').classList.toggle('active', viewMode === 'my');
+            document.getElementById('toggleAll').classList.toggle('active', viewMode === 'all');
+        }
+
+        async function loadAllCompletedJobs() {
+            try {
+                const res = await fetch(`${API}/queue`);
+                const data = await res.json();
+                for (const job of data.recent_completed || []) {
+                    if (job.status === 'completed') {
+                        await fetchResult(job.job_id, false); // false = not mine
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to load all jobs:', err);
+            }
+        }
+
+        // Polling fallback - checks for completed jobs every 3 seconds
+        function startPolling() {
+            pollTimer = setInterval(async () => {
+                // In 'my' mode, only poll if we have pending jobs
+                if (viewMode === 'my' && myJobs.size === 0) return;
+
+                try {
+                    const res = await fetch(`${API}/queue`);
+                    const data = await res.json();
+                    updateQueueUI(data);
+
+                    // Check completed jobs based on view mode
+                    for (const job of data.recent_completed || []) {
+                        if (job.status !== 'completed') continue;
+
+                        const isMine = myJobs.has(job.job_id);
+                        const shouldFetch = viewMode === 'all' || isMine;
+
+                        if (shouldFetch) {
+                            console.log('Polling found completed job:', job.job_id, isMine ? '(mine)' : '(other)');
+                            await fetchResult(job.job_id, isMine);
+                            if (isMine) {
+                                myJobs.delete(job.job_id);
+                                saveMyJobs();
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error('Poll error:', err);
+                }
+            }, 3000);
         }
 
         function saveMyJobs() {
@@ -852,10 +1144,12 @@
         }
 
         function saveImages() {
-            // Keep only last 10 images in localStorage
-            // Uses IndexedDB for larger storage (50MB+)
-            const toSave = images.slice(0, 10);
-            saveToIndexedDB(toSave);
+            // Sort by timestamp (newest first) and enforce limit
+            images.sort((a, b) => b.timestamp - a.timestamp);
+            if (images.length > MAX_IMAGES) {
+                images = images.slice(0, MAX_IMAGES);
+            }
+            saveToIndexedDB(images);
         }
 
         // IndexedDB for larger image storage
@@ -925,12 +1219,19 @@
                     if (data.type === 'queue_update') {
                         updateQueueUI(data);
 
-                        // Check for completed jobs that belong to us
+                        // Check for completed jobs based on view mode
                         for (const job of data.recent_completed || []) {
-                            if (myJobs.has(job.job_id) && job.status === 'completed') {
-                                await fetchResult(job.job_id);
-                                myJobs.delete(job.job_id);
-                                saveMyJobs();
+                            if (job.status !== 'completed') continue;
+
+                            const isMine = myJobs.has(job.job_id);
+                            const shouldFetch = viewMode === 'all' || isMine;
+
+                            if (shouldFetch) {
+                                await fetchResult(job.job_id, isMine);
+                                if (isMine) {
+                                    myJobs.delete(job.job_id);
+                                    saveMyJobs();
+                                }
                             }
                         }
                     }
@@ -1095,7 +1396,7 @@
 
         const fetchedJobs = new Set(); // Track already fetched jobs
 
-        async function fetchResult(jobId) {
+        async function fetchResult(jobId, isMine = true) {
             // Prevent duplicate fetches
             if (fetchedJobs.has(jobId)) {
                 console.log('Already fetched:', jobId);
@@ -1104,7 +1405,7 @@
             fetchedJobs.add(jobId);
 
             try {
-                console.log('Fetching result for:', jobId);
+                console.log('Fetching result for:', jobId, isMine ? '(mine)' : '(other)');
                 const res = await fetch(`${API}/jobs/${jobId}`);
                 const job = await res.json();
 
@@ -1122,7 +1423,8 @@
                         timestamp: Date.now(),
                         duration: job.completed_at && job.started_at
                             ? Math.round(job.completed_at - job.started_at)
-                            : null
+                            : null,
+                        isMine: isMine
                     };
 
                     console.log('Adding image to gallery:', jobId);
@@ -1137,25 +1439,34 @@
         }
 
         function renderGallery() {
-            elements.galleryCount.textContent = `${images.length} image${images.length !== 1 ? 's' : ''}`;
+            // Filter images based on view mode
+            let displayImages = images;
+            if (viewMode === 'my') {
+                displayImages = images.filter(img => img.isMine);
+            }
 
-            if (!images.length) {
+            elements.galleryCount.textContent = `${displayImages.length} image${displayImages.length !== 1 ? 's' : ''}`;
+
+            if (!displayImages.length) {
+                const emptyMsg = viewMode === 'my'
+                    ? 'No images from this browser yet.<br>Enter a prompt above or switch to "All Jobs".'
+                    : 'No images generated yet.<br>Enter a prompt above to get started.';
                 elements.gallery.innerHTML = `
                     <div class="gallery-empty">
                         <div class="gallery-empty-icon">◇</div>
-                        No images generated yet.<br>
-                        Enter a prompt above to get started.
+                        ${emptyMsg}
                     </div>
                 `;
                 return;
             }
 
-            elements.gallery.innerHTML = images.map(img => `
+            elements.gallery.innerHTML = displayImages.map(img => `
                 <div class="image-card">
-                    <div class="image-wrapper">
+                    <div class="image-wrapper" onclick="openFullscreen('${img.id}')">
                         <img src="data:image/png;base64,${img.b64}" alt="${escapeHtml(img.prompt)}" loading="lazy">
+                        ${img.isMine ? '<span class="image-badge">Mine</span>' : ''}
                         <div class="image-overlay">
-                            <button class="download-btn" onclick="downloadImage('${img.id}')">Download PNG</button>
+                            <button class="download-btn" onclick="event.stopPropagation(); downloadImage('${img.id}')">Download PNG</button>
                         </div>
                     </div>
                     <div class="image-info">
@@ -1167,6 +1478,43 @@
                     </div>
                 </div>
             `).join('');
+        }
+
+        function openFullscreen(imageId) {
+            const img = images.find(i => i.id === imageId);
+            if (!img) return;
+
+            const modal = document.getElementById('fullscreenModal');
+            const modalImg = document.getElementById('fullscreenImage');
+            const modalPrompt = document.getElementById('fullscreenPrompt');
+            const modalMeta = document.getElementById('fullscreenMeta');
+
+            modalImg.src = `data:image/png;base64,${img.b64}`;
+            modalPrompt.textContent = img.prompt;
+
+            // Build meta info
+            let metaHtml = '';
+            if (img.duration) {
+                metaHtml += `<div class="fullscreen-meta-row"><span>Generation time</span><span>${img.duration}s</span></div>`;
+            }
+            metaHtml += `<div class="fullscreen-meta-row"><span>Created</span><span>${formatTime(img.timestamp)}</span></div>`;
+            metaHtml += `<div class="fullscreen-meta-row"><span>Source</span><span>${img.isMine ? 'This browser' : 'External'}</span></div>`;
+            metaHtml += `<div class="fullscreen-meta-row"><span>Job ID</span><span>${img.id}</span></div>`;
+            modalMeta.innerHTML = metaHtml;
+
+            modal.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeFullscreen() {
+            const modal = document.getElementById('fullscreenModal');
+            modal.classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        function toggleFullscreenSidebar() {
+            const sidebar = document.getElementById('fullscreenSidebar');
+            sidebar.classList.toggle('hidden');
         }
 
         function downloadImage(imageId) {
@@ -1203,6 +1551,9 @@
         // Global function for onclick handlers
         window.cancelJob = cancelJob;
         window.downloadImage = downloadImage;
+        window.openFullscreen = openFullscreen;
+        window.closeFullscreen = closeFullscreen;
+        window.toggleFullscreenSidebar = toggleFullscreenSidebar;
 
         init();
     </script>

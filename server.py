@@ -1,5 +1,7 @@
 """
 Qwen-Image-2512 API Server - OpenAI-compatible image generation API with job queue
+
+Uses subprocess-based generation to ensure complete GPU memory cleanup between jobs.
 """
 
 import os
@@ -8,6 +10,8 @@ import base64
 import time
 import uuid
 import asyncio
+import subprocess
+import sys
 from enum import Enum
 from typing import Optional, Literal, Dict, List
 from contextlib import asynccontextmanager
@@ -24,10 +28,7 @@ import json
 
 # Configuration
 MAX_QUEUE_SIZE = 5
-RESULT_TTL_SECONDS = 300  # 5 minutes
-
-# Global pipeline
-pipe = None
+RESULT_TTL_SECONDS = 86400  # 24 hours - keep results around longer
 
 # Job status enum
 class JobStatus(str, Enum):
@@ -38,9 +39,11 @@ class JobStatus(str, Enum):
 
 # Job storage
 jobs: Dict[str, dict] = OrderedDict()
+jobs_lock = asyncio.Lock()  # Protect jobs dict access
 job_queue: asyncio.Queue = None
 current_job_id: Optional[str] = None
 worker_task: asyncio.Task = None
+last_broadcast_hash: Optional[int] = None  # For change detection
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -58,25 +61,33 @@ class ConnectionManager:
         print(f"WebSocket disconnected. Total: {len(self.active_connections)}")
 
     async def broadcast(self, message: dict):
-        """Broadcast message to all connected clients."""
+        """Broadcast message to all connected clients concurrently with timeout."""
         if not self.active_connections:
-            print("No active connections to broadcast to")
             return
 
         data = json.dumps(message)
-        disconnected = []
 
-        for connection in self.active_connections:
+        async def send_with_timeout(conn):
             try:
-                await connection.send_text(data)
-                print(f"Sent message to client")
+                await asyncio.wait_for(conn.send_text(data), timeout=5.0)
+                return None  # Success
+            except asyncio.TimeoutError:
+                print(f"WebSocket send timeout")
+                return conn  # Failed, return connection to disconnect
             except Exception as e:
-                print(f"Failed to send to client: {e}")
-                disconnected.append(connection)
+                print(f"WebSocket send error: {e}")
+                return conn  # Failed
 
-        # Clean up disconnected
-        for conn in disconnected:
-            self.disconnect(conn)
+        # Send to all clients concurrently
+        results = await asyncio.gather(
+            *[send_with_timeout(c) for c in self.active_connections],
+            return_exceptions=True
+        )
+
+        # Clean up failed/disconnected clients
+        for result in results:
+            if result is not None and not isinstance(result, Exception):
+                self.disconnect(result)
 
 ws_manager = ConnectionManager()
 
@@ -190,18 +201,22 @@ def get_queue_position(job_id: str) -> int:
     return -1
 
 
-def cleanup_old_jobs():
+async def cleanup_old_jobs():
     """Remove completed/failed jobs older than TTL."""
     now = time.time()
     to_remove = []
 
-    for job_id, job in jobs.items():
-        if job["status"] in (JobStatus.COMPLETED, JobStatus.FAILED):
-            if job["completed_at"] and (now - job["completed_at"]) > RESULT_TTL_SECONDS:
-                to_remove.append(job_id)
+    async with jobs_lock:
+        for job_id, job in list(jobs.items()):  # Use list() to avoid dict changed during iteration
+            if job["status"] in (JobStatus.COMPLETED, JobStatus.FAILED):
+                if job["completed_at"] and (now - job["completed_at"]) > RESULT_TTL_SECONDS:
+                    to_remove.append(job_id)
 
-    for job_id in to_remove:
-        del jobs[job_id]
+        for job_id in to_remove:
+            del jobs[job_id]
+
+    if to_remove:
+        print(f"Cleaned up {len(to_remove)} old jobs")
 
 
 def build_queue_status() -> dict:
@@ -210,7 +225,8 @@ def build_queue_status() -> dict:
     queued = []
     recent_completed = []
 
-    for job_id, job in jobs.items():
+    # Use list() to get a snapshot and avoid dict changed during iteration
+    for job_id, job in list(jobs.items()):
         job_info = {
             "job_id": job["job_id"],
             "prompt": job["prompt"][:100] + "..." if len(job["prompt"]) > 100 else job["prompt"],
@@ -247,92 +263,275 @@ def build_queue_status() -> dict:
     }
 
 
-async def broadcast_queue_status():
-    """Broadcast current queue status to all WebSocket clients."""
+async def broadcast_queue_status(force: bool = False):
+    """Broadcast current queue status to all WebSocket clients.
+
+    Args:
+        force: If True, broadcast even if status hasn't changed
+    """
+    global last_broadcast_hash
+
     status = build_queue_status()
-    print(f"Broadcasting to {len(ws_manager.active_connections)} clients: {status.get('running', {}).get('job_id') if status.get('running') else 'no running job'}")
+
+    # Check if status has changed (skip if no change and not forced)
+    # Create a hash based on key changing fields
+    running_job = status.get('running')
+    if running_job:
+        # Include step count for more granular updates during generation
+        running_info = (
+            running_job.get('job_id'),
+            running_job.get('progress', 0),
+            running_job.get('current_step', 0),
+        )
+    else:
+        running_info = (None, 0, 0)
+
+    queued_ids = tuple(j.get('job_id') for j in status.get('queued', []))
+    completed_ids = tuple(j.get('job_id') for j in status.get('recent_completed', [])[:5])
+    status_hash = hash((running_info, queued_ids, completed_ids))
+
+    if not force and status_hash == last_broadcast_hash:
+        return  # No changes, skip broadcast
+
+    last_broadcast_hash = status_hash
     await ws_manager.broadcast(status)
 
 
-def progress_callback(pipe, step, timestep, callback_kwargs):
-    """Callback to track generation progress."""
-    global current_job_id, jobs
+# Subprocess generation script (embedded)
+GENERATION_SCRIPT = '''
+import os
+import sys
+import json
+import base64
+import io
+import torch
 
-    if current_job_id and current_job_id in jobs:
-        job = jobs[current_job_id]
-        job["current_step"] = step + 1
-        job["progress"] = int((step + 1) / job["total_steps"] * 100)
+def main():
+    # Read parameters from stdin
+    params = json.loads(sys.stdin.read())
 
-        # Estimate remaining time
-        if job["started_at"] and step > 0:
-            elapsed = time.time() - job["started_at"]
-            time_per_step = elapsed / (step + 1)
-            remaining_steps = job["total_steps"] - (step + 1)
-            job["estimated_remaining"] = round(time_per_step * remaining_steps, 1)
+    prompt = params["prompt"]
+    width = params["width"]
+    height = params["height"]
+    num_inference_steps = params["num_inference_steps"]
+    guidance_scale = params["guidance_scale"]
+    model_path = params["model_path"]
 
-    return callback_kwargs
+    # Progress reporting via stderr
+    def report_progress(step, total):
+        print(json.dumps({"type": "progress", "step": step, "total": total}), file=sys.stderr, flush=True)
+
+    try:
+        # Import and load model
+        print(json.dumps({"type": "status", "message": "Loading model..."}), file=sys.stderr, flush=True)
+        from diffusers import QwenImagePipeline
+
+        pipe = QwenImagePipeline.from_pretrained(
+            model_path,
+            torch_dtype=torch.bfloat16,
+            local_files_only=True,
+        ).to("cuda")
+
+        print(json.dumps({"type": "status", "message": "Starting inference..."}), file=sys.stderr, flush=True)
+
+        # Progress callback
+        def step_callback(p, step, timestep, callback_kwargs):
+            report_progress(step + 1, num_inference_steps)
+            return callback_kwargs
+
+        # Generate
+        result = pipe(
+            prompt=prompt,
+            width=width,
+            height=height,
+            num_inference_steps=num_inference_steps,
+            true_cfg_scale=guidance_scale,
+            output_type="pil",
+            callback_on_step_end=step_callback,
+        )
+        image = result.images[0]
+
+        # Ensure CUDA operations complete
+        torch.cuda.synchronize()
+
+        # Convert to PNG bytes
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        png_bytes = buffer.getvalue()
+
+        # Output base64 result to stdout
+        result = {
+            "success": True,
+            "image_b64": base64.b64encode(png_bytes).decode("utf-8"),
+            "size": len(png_bytes),
+        }
+        print(json.dumps(result))
+
+        # Cleanup
+        del pipe
+        del result
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
+    except Exception as e:
+        import traceback
+        result = {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+        }
+        print(json.dumps(result))
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+'''
 
 
-def do_generation(prompt, width, height, num_inference_steps, guidance_scale, job_dict):
-    """Run generation with fresh pipeline load.
+async def do_generation_subprocess(prompt, width, height, num_inference_steps, guidance_scale, job_dict, progress_callback=None):
+    """Run generation in a subprocess for complete memory isolation.
 
-    Note: Loading fresh per request is required on Jetson Thor.
-    Keeping the model in memory after startup causes gray output.
+    Each generation runs in its own Python process. When the process exits,
+    ALL GPU memory is freed - no accumulation possible.
     """
-    from diffusers import QwenImagePipeline
+    import tempfile
 
-    def step_callback(pipe, step, timestep, callback_kwargs):
-        """Update job progress during generation."""
-        job_dict["current_step"] = step + 1
-        job_dict["progress"] = int((step + 1) / job_dict["total_steps"] * 100)
+    # Write the generation script to a temp file (keep it open until done)
+    script_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write(GENERATION_SCRIPT)
+            script_path = f.name
+            f.flush()  # Ensure content is written before subprocess reads
 
-        # Estimate remaining time
-        if job_dict["started_at"] and step > 0:
-            elapsed = time.time() - job_dict["started_at"]
-            time_per_step = elapsed / (step + 1)
-            remaining_steps = job_dict["total_steps"] - (step + 1)
-            job_dict["estimated_remaining"] = round(time_per_step * remaining_steps, 1)
+        # Prepare parameters
+        params = {
+            "prompt": prompt,
+            "width": width,
+            "height": height,
+            "num_inference_steps": num_inference_steps,
+            "guidance_scale": guidance_scale,
+            "model_path": MODEL_PATH,
+        }
 
-        return callback_kwargs
+        print(f"Starting subprocess generation for: {prompt[:50]}...")
 
-    print(f"Loading model for generation...")
-    job_dict["current_step"] = 0
-    job_dict["progress"] = 0
+        # Start subprocess
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, script_path,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
 
-    local_pipe = QwenImagePipeline.from_pretrained(
-        MODEL_PATH,
-        torch_dtype=torch.bfloat16,
-        local_files_only=True,
-    ).to('cuda')
+        # Send parameters and close stdin
+        process.stdin.write(json.dumps(params).encode())
+        await process.stdin.drain()
+        process.stdin.close()
+        await process.stdin.wait_closed()
 
-    print(f"Model loaded, starting inference...")
-    result = local_pipe(
-        prompt=prompt,
-        width=width,
-        height=height,
-        num_inference_steps=num_inference_steps,
-        true_cfg_scale=guidance_scale,
-        output_type="pil",
-        callback_on_step_end=step_callback,
-    )
-    image = result.images[0]
+        # Read stderr for progress updates and stdout for result
+        stderr_lines = []
 
-    # Cleanup to free memory
-    del local_pipe
-    torch.cuda.empty_cache()
+        async def read_stderr():
+            while True:
+                line = await process.stderr.readline()
+                if not line:
+                    break
+                line_str = line.decode().strip()
+                stderr_lines.append(line_str)
 
-    # Convert to PNG bytes
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return buffer.getvalue()
+                # Try to extract JSON from the line (tqdm output may be on same line)
+                json_start = line_str.find('{"type":')
+                if json_start >= 0:
+                    json_str = line_str[json_start:]
+                    # Find the end of the JSON object
+                    try:
+                        msg = json.loads(json_str)
+                        if msg.get("type") == "progress":
+                            step = msg["step"]
+                            total = msg["total"]
+                            job_dict["current_step"] = step
+                            job_dict["progress"] = int(step / total * 100)
+                            if job_dict["started_at"] and step > 1:
+                                elapsed = time.time() - job_dict["started_at"]
+                                time_per_step = elapsed / step
+                                remaining = time_per_step * (total - step)
+                                job_dict["estimated_remaining"] = round(remaining, 1)
+                        elif msg.get("type") == "status":
+                            print(f"  Subprocess: {msg['message']}")
+                        continue  # Successfully parsed, skip printing
+                    except json.JSONDecodeError:
+                        pass  # Fall through to print
+
+                # Non-JSON output, just print it
+                if line_str and not line_str.startswith('{"type":'):
+                    print(f"  Subprocess: {line_str}")
+
+        async def read_stdout():
+            return await process.stdout.read()
+
+        # Run both readers concurrently with timeout
+        try:
+            stderr_task = asyncio.create_task(read_stderr())
+            stdout_task = asyncio.create_task(read_stdout())
+
+            # Wait for process to complete
+            await asyncio.wait_for(process.wait(), timeout=600)
+
+            # Get stdout result (should be done now)
+            stdout = await stdout_task
+
+            # Cancel stderr reader if still running
+            stderr_task.cancel()
+            try:
+                await stderr_task
+            except asyncio.CancelledError:
+                pass
+
+        except asyncio.TimeoutError:
+            process.kill()
+            raise Exception("Generation timed out after 10 minutes")
+
+        if process.returncode != 0:
+            stderr_output = "\n".join(stderr_lines[-20:])  # Last 20 lines
+            raise Exception(f"Subprocess failed with code {process.returncode}. Stderr:\n{stderr_output}")
+
+        # Parse result
+        try:
+            result = json.loads(stdout.decode())
+        except json.JSONDecodeError as e:
+            raise Exception(f"Invalid JSON from subprocess: {e}. Output: {stdout.decode()[:500]}")
+
+        if not result.get("success"):
+            error_msg = result.get("error", "Unknown error")
+            traceback_str = result.get("traceback", "")
+            print(f"Subprocess error: {error_msg}")
+            if traceback_str:
+                print(f"Traceback:\n{traceback_str}")
+            raise Exception(error_msg)
+
+        # Decode image
+        png_bytes = base64.b64decode(result["image_b64"])
+        print(f"Generation complete. Image size: {len(png_bytes)} bytes")
+
+        return png_bytes
+
+    finally:
+        # Clean up temp script after subprocess has definitely finished
+        if script_path:
+            try:
+                os.unlink(script_path)
+            except:
+                pass
 
 
 async def periodic_broadcast(stop_event: asyncio.Event):
-    """Broadcast queue status every 2 seconds until stopped."""
+    """Broadcast queue status every second until stopped."""
     while not stop_event.is_set():
-        await broadcast_queue_status()
+        await broadcast_queue_status(force=True)  # Force broadcast during job execution
         try:
-            await asyncio.wait_for(stop_event.wait(), timeout=2.0)
+            await asyncio.wait_for(stop_event.wait(), timeout=1.0)
         except asyncio.TimeoutError:
             pass
 
@@ -360,9 +559,8 @@ async def process_job(job: dict):
             job["current_step"] = 0
             job["progress"] = 0
 
-            # Run in a separate thread to isolate from asyncio event loop
-            png_bytes = await asyncio.to_thread(
-                do_generation,
+            # Run in subprocess for complete memory isolation
+            png_bytes = await do_generation_subprocess(
                 job["prompt"],
                 job["width"],
                 job["height"],
@@ -421,21 +619,29 @@ async def queue_worker():
             job_queue.task_done()
 
             # Cleanup old jobs periodically
-            cleanup_old_jobs()
+            await cleanup_old_jobs()
 
         except asyncio.CancelledError:
             break
         except Exception as e:
             print(f"Worker error: {e}")
+            import traceback
+            traceback.print_exc()
             await asyncio.sleep(1)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Start worker on startup - model loaded fresh per request."""
+    """Start worker on startup.
+
+    Uses subprocess-based generation - each job runs in its own process
+    to ensure complete GPU memory cleanup between jobs.
+    """
     global job_queue, worker_task
 
-    print(f"Server starting - model will be loaded fresh per request")
+    print(f"Server starting (subprocess-based generation mode)...")
+    print(f"Model path: {MODEL_PATH}")
+    print(f"Each generation will run in isolated subprocess for memory safety.")
 
     # Initialize queue and start worker
     job_queue = asyncio.Queue()
@@ -450,8 +656,7 @@ async def lifespan(app: FastAPI):
         await worker_task
     except asyncio.CancelledError:
         pass
-
-    torch.cuda.empty_cache()
+    print("Server shutdown complete")
 
 
 app = FastAPI(title="Qwen-Image-2512 API", lifespan=lifespan)
