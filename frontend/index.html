@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QWEN // IMAGE FORGE</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0b;
+            --bg-secondary: #111113;
+            --bg-tertiary: #18181b;
+            --border: #27272a;
+            --border-bright: #3f3f46;
+            --text-primary: #fafafa;
+            --text-secondary: #a1a1aa;
+            --text-muted: #52525b;
+            --accent-cyan: #22d3ee;
+            --accent-green: #4ade80;
+            --accent-amber: #fbbf24;
+            --accent-red: #f87171;
+            --accent-purple: #a78bfa;
+            --glow-cyan: rgba(34, 211, 238, 0.15);
+            --glow-green: rgba(74, 222, 128, 0.15);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Noise overlay */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+            opacity: 0.03;
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        /* Scanline effect */
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0, 0, 0, 0.1) 2px,
+                rgba(0, 0, 0, 0.1) 4px
+            );
+            pointer-events: none;
+            z-index: 999;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 380px;
+            min-height: 100vh;
+        }
+
+        @media (max-width: 1024px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Left Panel - Main Interface */
+        .main-panel {
+            padding: 32px;
+            display: flex;
+            flex-direction: column;
+            gap: 32px;
+            border-right: 1px solid var(--border);
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .logo {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .logo-divider {
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+
+        .logo-sub {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        .version {
+            margin-left: auto;
+            font-size: 0.625rem;
+            color: var(--text-muted);
+            padding: 4px 8px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+        }
+
+        /* Prompt Section */
+        .prompt-section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+        }
+
+        .prompt-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.625rem;
+            color: var(--text-muted);
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+
+        .prompt-label::before {
+            content: '>';
+            color: var(--accent-cyan);
+        }
+
+        .prompt-textarea {
+            width: 100%;
+            min-height: 120px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            resize: vertical;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .prompt-textarea:focus {
+            outline: none;
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 0 3px var(--glow-cyan);
+        }
+
+        .prompt-textarea::placeholder {
+            color: var(--text-muted);
+        }
+
+        /* Controls */
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .control-label {
+            font-size: 0.625rem;
+            color: var(--text-muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        .control-select {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 32px 10px 12px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.8rem;
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2352525b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            transition: border-color 0.2s;
+        }
+
+        .control-select:hover {
+            border-color: var(--border-bright);
+        }
+
+        .control-select:focus {
+            outline: none;
+            border-color: var(--accent-cyan);
+        }
+
+        .generate-btn {
+            margin-left: auto;
+            padding: 12px 32px;
+            background: linear-gradient(135deg, var(--accent-cyan), #06b6d4);
+            border: none;
+            border-radius: 8px;
+            color: var(--bg-primary);
+            font-family: inherit;
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: transform 0.15s, box-shadow 0.15s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .generate-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px var(--glow-cyan);
+        }
+
+        .generate-btn:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .generate-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .generate-btn::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transform: translateX(-100%);
+        }
+
+        .generate-btn:hover:not(:disabled)::after {
+            animation: shimmer 0.6s ease;
+        }
+
+        @keyframes shimmer {
+            to { transform: translateX(100%); }
+        }
+
+        /* Gallery */
+        .gallery-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            min-height: 0;
+        }
+
+        .gallery-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .gallery-title {
+            font-size: 0.625rem;
+            color: var(--text-muted);
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .gallery-title::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            background: var(--accent-green);
+            border-radius: 50%;
+        }
+
+        .gallery-count {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .clear-btn {
+            font-size: 0.625rem;
+            color: var(--text-muted);
+            background: none;
+            border: 1px solid var(--border);
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+
+        .clear-btn:hover {
+            border-color: var(--accent-red);
+            color: var(--accent-red);
+        }
+
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            overflow-y: auto;
+            padding-bottom: 32px;
+        }
+
+        .gallery-empty {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 64px 32px;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            border: 1px dashed var(--border);
+            border-radius: 12px;
+        }
+
+        .gallery-empty-icon {
+            font-size: 2rem;
+            margin-bottom: 12px;
+            opacity: 0.3;
+        }
+
+        .image-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            animation: cardReveal 0.5s ease;
+        }
+
+        @keyframes cardReveal {
+            from {
+                opacity: 0;
+                transform: translateY(20px) scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .image-wrapper {
+            position: relative;
+            aspect-ratio: 1;
+            background: var(--bg-primary);
+            overflow: hidden;
+        }
+
+        .image-wrapper img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.3s;
+        }
+
+        .image-card:hover .image-wrapper img {
+            transform: scale(1.05);
+        }
+
+        .image-overlay {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 50%);
+            opacity: 0;
+            transition: opacity 0.3s;
+            display: flex;
+            align-items: flex-end;
+            padding: 16px;
+        }
+
+        .image-card:hover .image-overlay {
+            opacity: 1;
+        }
+
+        .download-btn {
+            padding: 8px 16px;
+            background: var(--text-primary);
+            color: var(--bg-primary);
+            border: none;
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 0.7rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: transform 0.15s;
+        }
+
+        .download-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .image-info {
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+        }
+
+        .image-prompt {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .image-meta {
+            display: flex;
+            gap: 12px;
+            margin-top: 8px;
+            font-size: 0.625rem;
+            color: var(--text-muted);
+        }
+
+        /* Right Panel - Queue Status */
+        .queue-panel {
+            background: var(--bg-secondary);
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            overflow-y: auto;
+        }
+
+        @media (max-width: 1024px) {
+            .queue-panel {
+                border-top: 1px solid var(--border);
+            }
+        }
+
+        .queue-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .queue-indicator {
+            width: 8px;
+            height: 8px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--glow-green); }
+            50% { opacity: 0.7; box-shadow: 0 0 0 8px transparent; }
+        }
+
+        .queue-title {
+            font-size: 0.625rem;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .queue-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .stat-card {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent-cyan);
+        }
+
+        .stat-label {
+            font-size: 0.625rem;
+            color: var(--text-muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-top: 4px;
+        }
+
+        .queue-section {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .queue-section-title {
+            font-size: 0.625rem;
+            color: var(--text-muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .job-card {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            transition: border-color 0.2s;
+        }
+
+        .job-card.running {
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 0 1px var(--glow-cyan);
+        }
+
+        .job-card.queued {
+            border-color: var(--accent-amber);
+        }
+
+        .job-card.completed {
+            border-color: var(--accent-green);
+        }
+
+        .job-card.failed {
+            border-color: var(--accent-red);
+        }
+
+        .job-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .job-id {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+        }
+
+        .job-status {
+            font-size: 0.6rem;
+            padding: 3px 8px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 500;
+        }
+
+        .job-status.running {
+            background: var(--glow-cyan);
+            color: var(--accent-cyan);
+        }
+
+        .job-status.queued {
+            background: rgba(251, 191, 36, 0.15);
+            color: var(--accent-amber);
+        }
+
+        .job-status.completed {
+            background: var(--glow-green);
+            color: var(--accent-green);
+        }
+
+        .job-status.failed {
+            background: rgba(248, 113, 113, 0.15);
+            color: var(--accent-red);
+        }
+
+        .job-prompt {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .job-progress {
+            height: 4px;
+            background: var(--bg-tertiary);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .job-progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+            border-radius: 2px;
+            transition: width 0.3s ease;
+            position: relative;
+        }
+
+        .job-progress-bar::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            animation: progressShimmer 1.5s infinite;
+        }
+
+        @keyframes progressShimmer {
+            from { transform: translateX(-100%); }
+            to { transform: translateX(100%); }
+        }
+
+        .job-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 8px;
+            font-size: 0.65rem;
+            color: var(--text-muted);
+        }
+
+        .cancel-btn {
+            font-size: 0.6rem;
+            color: var(--accent-red);
+            background: none;
+            border: 1px solid var(--accent-red);
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+
+        .cancel-btn:hover {
+            background: var(--accent-red);
+            color: var(--bg-primary);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 24px;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            border: 1px dashed var(--border);
+            border-radius: 8px;
+        }
+
+        /* Loading Animation */
+        .loading-animation {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            padding: 12px 0;
+        }
+
+        .loading-dot {
+            width: 6px;
+            height: 6px;
+            background: var(--accent-cyan);
+            border-radius: 50%;
+            animation: loadingBounce 1.4s infinite ease-in-out both;
+        }
+
+        .loading-dot:nth-child(1) { animation-delay: -0.32s; }
+        .loading-dot:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes loadingBounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-bright);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="main-panel">
+            <header class="header">
+                <span class="logo">QWEN</span>
+                <span class="logo-divider">//</span>
+                <span class="logo-sub">Image Forge</span>
+                <span class="version">v2.5-12B</span>
+            </header>
+
+            <section class="prompt-section">
+                <label class="prompt-label">Enter Prompt</label>
+                <textarea
+                    id="prompt"
+                    class="prompt-textarea"
+                    placeholder="Describe the image you want to generate..."
+                    rows="4"
+                ></textarea>
+                <div class="controls">
+                    <div class="control-group">
+                        <label class="control-label">Dimensions</label>
+                        <select id="size" class="control-select">
+                            <option value="512x512">512 × 512</option>
+                            <option value="768x768">768 × 768</option>
+                            <option value="1024x1024" selected>1024 × 1024</option>
+                            <option value="1024x768">1024 × 768 (Landscape)</option>
+                            <option value="768x1024">768 × 1024 (Portrait)</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label class="control-label">Quality</label>
+                        <select id="steps" class="control-select">
+                            <option value="20">Fast (20 steps)</option>
+                            <option value="30" selected>Balanced (30 steps)</option>
+                            <option value="50">Quality (50 steps)</option>
+                        </select>
+                    </div>
+                    <button id="generate" class="generate-btn">Generate</button>
+                </div>
+            </section>
+
+            <section class="gallery-section">
+                <div class="gallery-header">
+                    <span class="gallery-title">Generated Images</span>
+                    <span class="gallery-count" id="galleryCount">0 images</span>
+                    <button class="clear-btn" id="clearGallery">Clear All</button>
+                </div>
+                <div class="gallery-grid" id="gallery">
+                    <div class="gallery-empty">
+                        <div class="gallery-empty-icon">◇</div>
+                        No images generated yet.<br>
+                        Enter a prompt above to get started.
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <aside class="queue-panel">
+            <div class="queue-header">
+                <span class="queue-indicator"></span>
+                <span class="queue-title">System Status</span>
+            </div>
+
+            <div class="queue-stats">
+                <div class="stat-card">
+                    <div class="stat-value" id="runningCount">0</div>
+                    <div class="stat-label">Running</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="queuedCount">0</div>
+                    <div class="stat-label">Queued</div>
+                </div>
+            </div>
+
+            <div class="queue-section">
+                <div class="queue-section-title">Currently Processing</div>
+                <div id="runningJobs">
+                    <div class="empty-state">No active jobs</div>
+                </div>
+            </div>
+
+            <div class="queue-section">
+                <div class="queue-section-title">Queue</div>
+                <div id="queuedJobs">
+                    <div class="empty-state">Queue empty</div>
+                </div>
+            </div>
+
+            <div class="queue-section">
+                <div class="queue-section-title">Recent</div>
+                <div id="completedJobs">
+                    <div class="empty-state">No recent jobs</div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        const API = '/v1';
+        const myJobs = new Set(JSON.parse(localStorage.getItem('qwenJobs') || '[]'));
+
+        const elements = {
+            prompt: document.getElementById('prompt'),
+            size: document.getElementById('size'),
+            steps: document.getElementById('steps'),
+            generate: document.getElementById('generate'),
+            gallery: document.getElementById('gallery'),
+            galleryCount: document.getElementById('galleryCount'),
+            clearGallery: document.getElementById('clearGallery'),
+            runningCount: document.getElementById('runningCount'),
+            queuedCount: document.getElementById('queuedCount'),
+            runningJobs: document.getElementById('runningJobs'),
+            queuedJobs: document.getElementById('queuedJobs'),
+            completedJobs: document.getElementById('completedJobs'),
+        };
+
+        let images = [];
+        let ws = null;
+        let wsReconnectTimer = null;
+        let wsReconnectDelay = 1000;
+
+        // Initialize
+        async function init() {
+            // Load images from IndexedDB
+            await initDB();
+            images = await loadFromIndexedDB();
+            images.sort((a, b) => b.timestamp - a.timestamp); // Newest first
+            renderGallery();
+            connectWebSocket();
+
+            elements.generate.addEventListener('click', submitJob);
+            elements.prompt.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    submitJob();
+                }
+            });
+            elements.clearGallery.addEventListener('click', clearGallery);
+        }
+
+        function saveMyJobs() {
+            localStorage.setItem('qwenJobs', JSON.stringify([...myJobs]));
+        }
+
+        function saveImages() {
+            // Keep only last 10 images in localStorage
+            // Uses IndexedDB for larger storage (50MB+)
+            const toSave = images.slice(0, 10);
+            saveToIndexedDB(toSave);
+        }
+
+        // IndexedDB for larger image storage
+        let db = null;
+        const DB_NAME = 'qwenImageDB';
+        const STORE_NAME = 'images';
+
+        function initDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, 1);
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    db = request.result;
+                    resolve(db);
+                };
+                request.onupgradeneeded = (e) => {
+                    const database = e.target.result;
+                    if (!database.objectStoreNames.contains(STORE_NAME)) {
+                        database.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                    }
+                };
+            });
+        }
+
+        async function saveToIndexedDB(imageArray) {
+            if (!db) await initDB();
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            const store = tx.objectStore(STORE_NAME);
+            // Clear and save fresh
+            store.clear();
+            imageArray.forEach(img => store.put(img));
+        }
+
+        async function loadFromIndexedDB() {
+            if (!db) await initDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const store = tx.objectStore(STORE_NAME);
+                const request = store.getAll();
+                request.onsuccess = () => resolve(request.result || []);
+                request.onerror = () => resolve([]);
+            });
+        }
+
+        // WebSocket connection
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+            console.log('Connecting to WebSocket:', wsUrl);
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                wsReconnectDelay = 1000; // Reset delay on successful connection
+                updateConnectionStatus(true);
+            };
+
+            ws.onmessage = async (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+
+                    if (data.type === 'pong') {
+                        return; // Heartbeat response
+                    }
+
+                    if (data.type === 'queue_update') {
+                        updateQueueUI(data);
+
+                        // Check for completed jobs that belong to us
+                        for (const job of data.recent_completed || []) {
+                            if (myJobs.has(job.job_id) && job.status === 'completed') {
+                                await fetchResult(job.job_id);
+                                myJobs.delete(job.job_id);
+                                saveMyJobs();
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error('WebSocket message error:', err);
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                updateConnectionStatus(false);
+                scheduleReconnect();
+            };
+
+            ws.onerror = (err) => {
+                console.error('WebSocket error:', err);
+                ws.close();
+            };
+
+            // Heartbeat to keep connection alive
+            setInterval(() => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send('ping');
+                }
+            }, 30000);
+        }
+
+        function scheduleReconnect() {
+            if (wsReconnectTimer) return;
+
+            console.log(`Reconnecting in ${wsReconnectDelay}ms...`);
+            wsReconnectTimer = setTimeout(() => {
+                wsReconnectTimer = null;
+                wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30000); // Max 30s
+                connectWebSocket();
+            }, wsReconnectDelay);
+        }
+
+        function updateConnectionStatus(connected) {
+            const indicator = document.querySelector('.queue-indicator');
+            if (indicator) {
+                indicator.style.background = connected ? 'var(--accent-green)' : 'var(--accent-red)';
+            }
+        }
+
+        async function submitJob() {
+            const prompt = elements.prompt.value.trim();
+            if (!prompt) {
+                elements.prompt.focus();
+                return;
+            }
+
+            elements.generate.disabled = true;
+
+            try {
+                const res = await fetch(`${API}/images/generations`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt,
+                        size: elements.size.value,
+                        num_inference_steps: parseInt(elements.steps.value),
+                        model: 'qwen-image'
+                    })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || `Error ${res.status}`);
+                }
+
+                const data = await res.json();
+                myJobs.add(data.job_id);
+                saveMyJobs();
+
+                // WebSocket will provide updates automatically
+            } catch (err) {
+                alert(`Failed to submit: ${err.message}`);
+            } finally {
+                elements.generate.disabled = false;
+            }
+        }
+
+        function updateQueueUI(data) {
+            elements.runningCount.textContent = data.running ? 1 : 0;
+            elements.queuedCount.textContent = data.queued?.length || 0;
+
+            // Running job
+            if (data.running) {
+                elements.runningJobs.innerHTML = renderJobCard(data.running, 'running');
+            } else {
+                elements.runningJobs.innerHTML = '<div class="empty-state">No active jobs</div>';
+            }
+
+            // Queued jobs
+            if (data.queued?.length) {
+                elements.queuedJobs.innerHTML = data.queued.map(j => renderJobCard(j, 'queued')).join('');
+            } else {
+                elements.queuedJobs.innerHTML = '<div class="empty-state">Queue empty</div>';
+            }
+
+            // Completed jobs
+            if (data.recent_completed?.length) {
+                elements.completedJobs.innerHTML = data.recent_completed
+                    .slice(0, 5)
+                    .map(j => renderJobCard(j, j.status))
+                    .join('');
+            } else {
+                elements.completedJobs.innerHTML = '<div class="empty-state">No recent jobs</div>';
+            }
+        }
+
+        function renderJobCard(job, status) {
+            const isMine = myJobs.has(job.job_id);
+            let progressHtml = '';
+            let metaHtml = '';
+
+            if (status === 'running') {
+                const pct = job.progress || 0;
+                const eta = job.estimated_remaining ? `~${Math.round(job.estimated_remaining)}s` : 'calculating...';
+                progressHtml = `
+                    <div class="job-progress">
+                        <div class="job-progress-bar" style="width: ${pct}%"></div>
+                    </div>
+                    <div class="job-meta">
+                        <span>${pct}% · ${job.current_step || 0}/${job.total_steps || 30} steps</span>
+                        <span>${eta}</span>
+                    </div>
+                `;
+            } else if (status === 'queued' && isMine) {
+                metaHtml = `
+                    <div class="job-meta">
+                        <span>Position: #${job.position || '?'}</span>
+                        <button class="cancel-btn" onclick="cancelJob('${job.job_id}')">Cancel</button>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="job-card ${status}">
+                    <div class="job-header">
+                        <span class="job-id">${job.job_id}${isMine ? ' ★' : ''}</span>
+                        <span class="job-status ${status}">${status}</span>
+                    </div>
+                    <div class="job-prompt">${escapeHtml(job.prompt || '')}</div>
+                    ${progressHtml}
+                    ${metaHtml}
+                </div>
+            `;
+        }
+
+        async function cancelJob(jobId) {
+            try {
+                await fetch(`${API}/jobs/${jobId}`, { method: 'DELETE' });
+                myJobs.delete(jobId);
+                saveMyJobs();
+                await refreshQueue();
+            } catch (err) {
+                console.error('Cancel failed:', err);
+            }
+        }
+
+        const fetchedJobs = new Set(); // Track already fetched jobs
+
+        async function fetchResult(jobId) {
+            // Prevent duplicate fetches
+            if (fetchedJobs.has(jobId)) {
+                console.log('Already fetched:', jobId);
+                return;
+            }
+            fetchedJobs.add(jobId);
+
+            try {
+                console.log('Fetching result for:', jobId);
+                const res = await fetch(`${API}/jobs/${jobId}`);
+                const job = await res.json();
+
+                if (job.status === 'completed' && job.result?.data?.[0]?.b64_json) {
+                    // Check if already in images array
+                    if (images.some(img => img.id === jobId)) {
+                        console.log('Image already in gallery:', jobId);
+                        return;
+                    }
+
+                    const imageData = {
+                        id: jobId,
+                        prompt: job.prompt,
+                        b64: job.result.data[0].b64_json,
+                        timestamp: Date.now(),
+                        duration: job.completed_at && job.started_at
+                            ? Math.round(job.completed_at - job.started_at)
+                            : null
+                    };
+
+                    console.log('Adding image to gallery:', jobId);
+                    images.unshift(imageData);
+                    saveImages();
+                    renderGallery();
+                }
+            } catch (err) {
+                console.error('Fetch result failed:', err);
+                fetchedJobs.delete(jobId); // Allow retry on error
+            }
+        }
+
+        function renderGallery() {
+            elements.galleryCount.textContent = `${images.length} image${images.length !== 1 ? 's' : ''}`;
+
+            if (!images.length) {
+                elements.gallery.innerHTML = `
+                    <div class="gallery-empty">
+                        <div class="gallery-empty-icon">◇</div>
+                        No images generated yet.<br>
+                        Enter a prompt above to get started.
+                    </div>
+                `;
+                return;
+            }
+
+            elements.gallery.innerHTML = images.map(img => `
+                <div class="image-card">
+                    <div class="image-wrapper">
+                        <img src="data:image/png;base64,${img.b64}" alt="${escapeHtml(img.prompt)}" loading="lazy">
+                        <div class="image-overlay">
+                            <button class="download-btn" onclick="downloadImage('${img.id}')">Download PNG</button>
+                        </div>
+                    </div>
+                    <div class="image-info">
+                        <div class="image-prompt">${escapeHtml(img.prompt)}</div>
+                        <div class="image-meta">
+                            <span>${img.duration ? img.duration + 's' : ''}</span>
+                            <span>${formatTime(img.timestamp)}</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function downloadImage(imageId) {
+            const img = images.find(i => i.id === imageId);
+            if (!img) return;
+
+            const link = document.createElement('a');
+            link.href = `data:image/png;base64,${img.b64}`;
+            link.download = `qwen-${imageId}.png`;
+            link.click();
+        }
+
+        function clearGallery() {
+            if (!images.length) return;
+            if (!confirm('Clear all generated images?')) return;
+
+            images = [];
+            saveImages();
+            renderGallery();
+        }
+
+        function formatTime(ts) {
+            const d = new Date(ts);
+            return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // Global function for onclick handlers
+        window.cancelJob = cancelJob;
+        window.downloadImage = downloadImage;
+
+        init();
+    </script>
+</body>
+</html>

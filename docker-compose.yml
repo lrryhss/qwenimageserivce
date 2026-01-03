@@ -1,0 +1,27 @@
+services:
+  qwenimage:
+    build: .
+    image: qwenimage:jetson
+    container_name: qwenimage
+    restart: unless-stopped
+    runtime: nvidia
+    ports:
+      - "8002:8002"
+    environment:
+      - DEVICE=cuda
+      - PORT=8002
+      - HF_HOME=/models
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    volumes:
+      - /data/models:/data/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  qwenimage-models:
